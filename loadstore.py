@@ -7,7 +7,7 @@ import bisect
 
 video_dir = 'video/'        # video raw features
 audio_dir = 'audio/'        # audio raw features
-model_dir = 'model/'        # network model data
+save_dir  = 'save/'         # network saved data
 log_dir   = 'log/'          # log information
 
 video_fps = 30
@@ -88,18 +88,20 @@ def delaySteps(inps, outps, step_delay):
     pass
         
 
-def loadData(pass_id, vali_rate=0.2, step_delay=20, repreprocess=False):
-    '''load input and output from model_dir, or from video_dir and audio_dir
+def loadData(pass_id, vali_rate=0.2, step_delay=20, seq_len=100, repreprocess=False):
+    '''load input and output from save_dir, or from video_dir and audio_dir
     if repreprocessing is needed.
     ### Parameters
-    passId        id (name) of this pass, including training and testing \\
-    valiRate      validation set ratio, default value 0.2 \\
-    stepDelay     step delay in LSTM network. One step 10 ms \\
-    repreprocess  whether repreprocessing is needed, default value False \\
+    pass_id        id (name) of this pass, including training and testing \\
+    vali_rate      validation set ratio, default value 0.2 \\
+    step_delay     step delay in LSTM network. One step 10 ms \\
+    seq_len        sequential length (frames) of data \\
+    repreprocess   whether repreprocessing is needed, default value False \\
     ### Return Values
-        
+    new_inps        processed input data
+    new_outps       processed output data
     '''
-    if repreprocess or os.path.exists(model_dir + pass_id + '/') == False:
+    if repreprocess or os.path.exists(save_dir + pass_id + '/') == False:
         # extract raw features from video_dir and audio_dir
         inps, outps = loadRawFeature(vali_rate)
         
@@ -107,22 +109,26 @@ def loadData(pass_id, vali_rate=0.2, step_delay=20, repreprocess=False):
         inps, outps, means, stds = normalizeData(inps, outps)
         
         # save them to model/pass_id/inout_data.npz
-        if os.path.exists(model_dir + pass_id + '/') == False:
-            os.mkdir(model_dir + pass_id + '/')
+        if os.path.exists(save_dir + pass_id + '/') == False:
+            os.mkdir(save_dir + pass_id + '/')
             
-        np.savez(model_dir+pass_id+'/inout_data.npz', 
+        np.savez(save_dir+pass_id+'/inout_data.npz', 
                  inps=inps,          outps=outps, 
                  inps_mean=means[0], outps_mean=means[1],
                  inps_std=stds[0],   outps_std=stds[1])
         
     # extract inputs and outputs from model/passId/inout_data.npz
-    inout_data = np.load(model_dir+pass_id+'/inout_data.npz')
+    inout_data = np.load(save_dir+pass_id+'/inout_data.npz')
     inps, outps = inout_data['inps'], inout_data['outps']
     
     # step delay
-    # specify batches and batch_pointer
+    if len(inps) - step_delay >= seq_len:
+        new_inps  = np.copy(inps[step_delay:, :])
+        new_outps = np.copy(outps[:, :-step_delay if step_delay > 0 else None])
     
-
+    np.savez(save_dir+pass_id+'/inout_data_delay.npz',
+             inps=new_inps, outps=new_outps, step_delay=step_delay)
+    return new_inps, new_outps
 
 if __name__ == '__main__':
     print('Hello, World')
