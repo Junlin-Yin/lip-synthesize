@@ -5,6 +5,6 @@ keep_prob	1
 seq_len	100
 batch_size	100
 grad_clip	10
-lr	1e-3
+lr	1.00E-03
 dr	1
 save_freq	10

@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 
+import tensorflow as tf
 import numpy as np
 import os
+import math
 import random
 import bisect
 
 video_dir = 'video/'        # video raw features
 audio_dir = 'audio/'        # audio raw features
 save_dir  = 'save/'         # network saved data
-log_dir   = 'log/'          # log information
 
 video_fps = 30
 
@@ -84,24 +85,22 @@ def normalizeData(inps, outps):
     norm_outps = {'training':toutps, 'validation':voutps}
     return norm_inps, norm_outps, means, stds
 
-def delaySteps(inps, outps, step_delay):
-    pass
-        
-
-def loadData(pass_id, vali_rate=0.2, step_delay=20, seq_len=100, repreprocess=False):
+def loadData(pass_id, args, preprocess=False):
     '''load input and output from save_dir, or from video_dir and audio_dir
-    if repreprocessing is needed.
+    if preprocessing is needed.
     ### Parameters
-    pass_id        id (name) of this pass, including training and testing \\
-    vali_rate      validation set ratio, default value 0.2 \\
-    step_delay     step delay in LSTM network. One step 10 ms \\
-    seq_len        sequential length (frames) of data \\
-    repreprocess   whether repreprocessing is needed, default value False \\
+    pass_id        (str)  name of this pass, including training and testing \\
+    args           (dict) argument dictionary containing vr, step_delay, seq_len, etc. \\
+    preprocess     (bool) whether preprocessing is needed \\
     ### Return Values
-    new_inps        processed input data
-    new_outps       processed output data
+    new_inps       (dict) processed input data \\
+    new_outps      (dict) processed output data
     '''
-    if repreprocess or os.path.exists(save_dir + pass_id + '/') == False:
+    vali_rate  = args['vr']
+    step_delay = args['step_delay']
+    seq_len    = args['seq_len']
+    
+    if preprocess or os.path.exists(save_dir + pass_id + '/') == False:
         # extract raw features from video_dir and audio_dir
         inps, outps = loadRawFeature(vali_rate)
         
@@ -121,14 +120,78 @@ def loadData(pass_id, vali_rate=0.2, step_delay=20, seq_len=100, repreprocess=Fa
     inout_data = np.load(save_dir+pass_id+'/inout_data.npz')
     inps, outps = inout_data['inps'], inout_data['outps']
     
-    # step delay
-    if len(inps) - step_delay >= seq_len:
-        new_inps  = np.copy(inps[step_delay:, :])
-        new_outps = np.copy(outps[:, :-step_delay if step_delay > 0 else None])
+    # deal with step delay
+    new_inps, new_outps = {'training':[], 'validation':[]}
+    for key in new_inps.keys():
+        for inp, outp in zip(inps[key], outps[key]):
+            # throw away those which have less than <step_delay+seq_len> frames
+            if inp.shape[0] - step_delay >= seq_len:
+                new_inps[key].append(np.copy(inp[step_delay:, :]))
+                new_outps[key].append(np.copy(outp[:, :-step_delay if step_delay > 0 else None]))
     
     np.savez(save_dir+pass_id+'/inout_data_delay.npz',
              inps=new_inps, outps=new_outps, step_delay=step_delay)
     return new_inps, new_outps
+
+def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
+    '''fetch next batch of inputs and outputs and update batch pointer
+    ### Parameters
+    inps     (dict) input dictionary which contains two list \\
+    outps    (dict) output dictionary which contains two list \\
+    mode     (str)  training or validation \\
+    batch_pt (dict) batch pointer dictionary which contains two modes \\
+    nbatches (dict) number-of-batch dictionary containing two modes \\
+    args     (dict) argument dictionary containing batch_size, seq_len, etc. \\
+    ### Return Values
+    x        (list of ndarrays) input batch \\
+    y        (list of ndarrays) output batch
+    '''
+    batch_size = args['batch_size']
+    seq_len    = args['seq_len']
+    
+    x, y = [], []
+    for i in range(batch_size):
+        idx = batch_pt[mode]
+        inp, outp = inps[mode][idx], outps[mode][idx]
+
+        # formatting each sequence randomly
+        startfr = random.randint([0, inp.shape[0]-seq_len-1])
+        x.append(np.copy(inp[startfr : startfr+seq_len]))
+        y.append(np.copy(outp[startfr: startfr+seq_len]))
+        
+        # determine whether to move to next fragment of data
+        nseq = math.ceil(inp.shape[0] / seq_len)
+        if random.random() < (1 / nseq):
+            # let X be the number of sequences extracted from inp,
+            # then E(X) = nseq
+            batch_pt[mode] = (batch_pt[mode] + 1) % nbatches[mode]
+        
+    return x, y
+
+def restoreState(sess, pass_id):
+    '''restore network states
+    ### Parameters
+    sess       (Session) \\
+    pass_id    (str)    name of this pass, including training and testing
+    ### Return Values
+    startEpoch (int)    we should continue training from this epoch 
+    '''
+    # define checkpoint saver
+    saver = tf.train.Saver(tf.global_variables())
+
+    # restore start epoch number and global variables
+    save_pass_dir = save_dir + pass_id + '/'
+    last_ckpt = tf.train.latest_checkpoint(save_pass_dir)
+    if last_ckpt is None:
+        # no ckpt file yet
+        startEpoch = 0
+    else:
+        startEpoch = int(last_ckpt.split('-')[-1])
+        saver.restore(sess, save_pass_dir)
+    
+    return startEpoch
+        
+    
 
 if __name__ == '__main__':
     print('Hello, World')
