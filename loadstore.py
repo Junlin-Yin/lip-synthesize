@@ -3,6 +3,7 @@
 import tensorflow as tf
 import numpy as np
 import os
+import time
 import math
 import random
 import bisect
@@ -191,7 +192,32 @@ def restoreState(sess, pass_id):
     
     return startEpoch
         
+def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
+    '''...
+    '''
+    # calculate eta-time
+    cur_batches = e * nbatches + b
+    eta_batches = nepochs*nbatches - 1 - cur_batches
+    eta_time = round(eta_batches * b_during)
+    m, s = divmod(eta_time, 60)
+    h, m = divmod(m, 60)
+    eta_str = "%d:%02d:%02d" % (h, m, s)
+    cur_str = time.strftime("%m-%d %H:%M:%S", time.localtime(time.time()))
     
+    # initialize log file
+    if cur_batches == 0:
+        with open(save_dir+pass_id+'/avgloss.log', 'w') as f:
+            f.write("0 %f %f\n" % (tloss, tloss))
+    
+    # print & save batch report
+    report = "epoch:%d/%d batch:%d/%d tloss:%f cur_time:%s eta_time:%s" % (e+1, nepochs, b+1, nbatches, tloss, cur_str, eta_str)
+    if b % b_savef == 0 or b == nbatches - 1:
+        with open(save_dir+pass_id+'/progress.log', 'w') as f:
+            f.write(report)
+    print(report)
+
+def reportEpoch(validLoss):
+    pass
 
 if __name__ == '__main__':
     print('Hello, World')

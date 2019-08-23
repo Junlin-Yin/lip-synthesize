@@ -5,7 +5,7 @@ import pandas as pd
 import math
 import os
 
-from loadstore import loadData, restoreState, nextBatch
+from loadstore import loadData, restoreState, nextBatch, reportBatch, reportEpoch
 
 class Audio2Video:
     def __init__(self, path=None):
@@ -21,7 +21,8 @@ class Audio2Video:
         self.args['grad_clip']  = 10    # gradient clipping threshold
         self.args['lr']         = 1e-3  # initial learning rate
         self.args['dr']         = 1     # learning rate's decay rate
-        self.args['save_freq']  = 10    # 
+        self.args['b_savef']    = 10    # batch report save frequency
+        self.args['e_savef']    = 5     # epoch report save frequency
         
         if path is not None and os.path.exists(path):
             data = pd.read_csv(path, delimiter='\t')
@@ -42,13 +43,14 @@ class Audio2Video:
         
         # initialize batch information
         self.nbatches, self.batch_pt = {}, {}
-        for key in ['training', 'validation']:
+        for key in self.inps.keys():
             # count the total number of sequences we can get from the data
             nseq = sum([math.ceil(inp.shape[0] / self.args['seq_len']) for inp in self.inps[key]])
             # every batch_size sequences consist of one batch
             self.nbatches[key] = nseq // self.args['batch_size']
             # batch pointers
             self.batch_pt[key] = 0
+        self.total_batches = self.nbatches['training'] * self.args['nepochs']
         
     def LSTM_model(self, mode='training'):
         '''Construct LSTM network for lip synthesizing
