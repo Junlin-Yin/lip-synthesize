@@ -175,25 +175,34 @@ def restoreState(sess, pass_id):
     sess       (Session) \\
     pass_id    (str)    name of this pass, including training and testing
     ### Return Values
-    startEpoch (int)    we should continue training from this epoch 
+    startEpoch (int)    we should continue training from this epoch \\
+    saver      (Saver)  tf.train.Saver
     '''
     # define checkpoint saver
     saver = tf.train.Saver(tf.global_variables())
 
     # restore start epoch number and global variables
-    save_pass_dir = save_dir + pass_id + '/'
-    last_ckpt = tf.train.latest_checkpoint(save_pass_dir)
+    last_ckpt = tf.train.latest_checkpoint(save_dir+pass_id)
     if last_ckpt is None:
         # no ckpt file yet
         startEpoch = 0
     else:
         startEpoch = int(last_ckpt.split('-')[-1])
-        saver.restore(sess, save_pass_dir)
+        saver.restore(sess, save_dir+pass_id)
     
-    return startEpoch
+    return startEpoch, saver
         
 def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
-    '''...
+    '''summary after each training batch
+    ### Parameters
+    pass_id    (str)    name of this pass, including training and testing \\
+    e          (int)    current epoch index \\
+    b          (int)    current training batch index \\
+    nepochs    (int)    total number of epochs \\
+    nbatches   (int)    total number of training batches per epoch \\
+    b_during   (float)  time elapse per training batch \\
+    b_savef    (int)    frequency to save to progress.log \\
+    tloss      (float)  training loss in current training batch
     '''
     # calculate eta-time
     cur_batches = e * nbatches + b
@@ -206,7 +215,7 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
     
     # initialize log file
     if cur_batches == 0:
-        with open(save_dir+pass_id+'/avgloss.log', 'w') as f:
+        with open(save_dir+pass_id+'/loss.log', 'w') as f:
             f.write("0 %f %f\n" % (tloss, tloss))
     
     # print & save batch report
@@ -214,10 +223,30 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
     if b % b_savef == 0 or b == nbatches - 1:
         with open(save_dir+pass_id+'/progress.log', 'w') as f:
             f.write(report)
+            print('progress.log at epoch %d/%d, batch %d/%d saved' % (e+1, nepochs, b+1, nbatches))
     print(report)
 
-def reportEpoch(validLoss):
-    pass
+def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss):
+    '''summary after each epoch
+    ### Parameters
+    pass_id    (str)     name of this pass, including training and testing \\
+    sess       (Session) tf.Session \\
+    saver      (Saver)   tf.train.Saver \\
+    e          (int)     current epoch index \\
+    nepochs    (int)     total number of epochs \\
+    e_savef    (int)     frequency to save to checkpoint file \\
+    trainLoss  (float)   final training loss in this epoch \\
+    validLoss  (float)   average validation loss in this epoch
+    '''
+    # save checkpoint
+    if (e+1) % e_savef == 0 or e == nepochs - 1:
+        saver.save(sess, save_dir+pass_id, global_step=e+1)
+        print('checkpoint at epoch %d/%d saved' % (e+1, nepochs))
+        
+    # report loss
+    with open(save_dir+pass_id+'/loss.log', 'a') as f:
+        f.write("%d %f %f\n" % (e+1, trainLoss, validLoss))
+        print('loss.log at epoch %d/%d saved' % (e+1, nepochs))
 
 if __name__ == '__main__':
     print('Hello, World')
