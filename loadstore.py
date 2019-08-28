@@ -58,7 +58,7 @@ def loadRawFeature(vali_rate):
             key = 'training' if random.random() > vali_rate else 'validation'
             inps[key].append(inp)
             outps[key].append(outp)
-            
+    print('loadRawFeature() done')        
     return inps, outps
 
 def normalizeData(inps, outps):
@@ -84,6 +84,8 @@ def normalizeData(inps, outps):
 
     norm_inps  = {'training':tinps, 'validation':vinps}
     norm_outps = {'training':toutps, 'validation':voutps}
+    
+    print('normalizeData() done')
     return norm_inps, norm_outps, means, stds
 
 def loadData(pass_id, args, preprocess=False):
@@ -101,24 +103,25 @@ def loadData(pass_id, args, preprocess=False):
     step_delay = args['step_delay']
     seq_len    = args['seq_len']
     
-    if preprocess or os.path.exists(save_dir + pass_id + '/') == False:
+    if preprocess or os.path.exists(save_dir+'/inout_data.npz') == False:
         # extract raw features from video_dir and audio_dir
         inps, outps = loadRawFeature(vali_rate)
         
         # normalize them
         inps, outps, means, stds = normalizeData(inps, outps)
-        
-        # save them to model/pass_id/inout_data.npz
-        if os.path.exists(save_dir + pass_id + '/') == False:
-            os.mkdir(save_dir + pass_id + '/')
-            
-        np.savez(save_dir+pass_id+'/inout_data.npz', 
+
+        # save them to model/inout_data.npz            
+        np.savez(save_dir+'/inout_data.npz', 
                  inps=inps,          outps=outps, 
                  inps_mean=means[0], outps_mean=means[1],
                  inps_std=stds[0],   outps_std=stds[1])
-        
+    
+    # create work space for current pass
+    if os.path.exists(save_dir + pass_id + '/') == False:
+        os.mkdir(save_dir + pass_id + '/')
+            
     # extract inputs and outputs from model/passId/inout_data.npz
-    inout_data = np.load(save_dir+pass_id+'/inout_data.npz')
+    inout_data = np.load(save_dir+'/inout_data.npz')
     inps, outps = inout_data['inps'], inout_data['outps']
     
     # deal with step delay
@@ -130,8 +133,7 @@ def loadData(pass_id, args, preprocess=False):
                 new_inps[key].append(np.copy(inp[step_delay:, :]))
                 new_outps[key].append(np.copy(outp[:, :-step_delay if step_delay > 0 else None]))
     
-    np.savez(save_dir+pass_id+'/inout_data_delay.npz',
-             inps=new_inps, outps=new_outps, step_delay=step_delay)
+    print('loadData() done')
     return new_inps, new_outps
 
 def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
@@ -167,7 +169,7 @@ def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
             # then E(X) = nseq
             batch_pt[mode] = (batch_pt[mode] + 1) % nbatches[mode]
         
-    return x, y
+    return np.array(x), np.array(y)
 
 def restoreState(sess, pass_id):
     '''restore network states
@@ -247,6 +249,19 @@ def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss)
     with open(save_dir+pass_id+'/loss.log', 'a') as f:
         f.write("%d %f %f\n" % (e+1, trainLoss, validLoss))
         print('loss.log at epoch %d/%d saved' % (e+1, nepochs))
+        
+def loadAudioData(audio_path):
+    '''load audio mfcc features from audio_path.
+    This function is designed expecially for predict and only one audio input is allowed
+    ### Parameters
+    audio_path      (str)      audio mfcc feature file path
+    ### Return Values
+    inp             (ndarray)  (N-1, 28) audio input
+    audio_timestamp (ndarray)  (N-1, ) audio timestamp
+    '''
+
+    
+    return inp, audio_timestamp
 
 if __name__ == '__main__':
     print('Hello, World')
