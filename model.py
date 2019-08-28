@@ -8,7 +8,7 @@ import time
 import os
 
 from loadstore import loadData, restoreState, nextBatch, reportBatch, reportEpoch
-from loadstore import loadAudioData, save_dir
+from loadstore import save_dir
 
 class Audio2Video:
     def __init__(self, name, argspath=None):
@@ -42,7 +42,7 @@ class Audio2Video:
                                          args         = self.args,
                                          preprocess   = False)
         # In this network, self.dimin = 28, self.dimout = 20
-        self.dimin, self.dimout = self.inps.shape[1], self.outps.shape[1]
+        self.dimin, self.dimout = self.inps['training'][0].shape[1], self.outps['training'][0].shape[1]
         
         # initialize batch information
         self.nbatches, self.batch_pt = {}, {}
@@ -93,7 +93,8 @@ class Audio2Video:
             # define how to generate predicted output
             hiddens = []
             # init_state.shape = (nlayers, 2, batch_size, dimhidden)
-            self.init_state = state = network.zero_state(batch_size, tf.float32)
+            self.init_state = network.zero_state(batch_size, tf.float32)
+            state = np.copy(self.init_state)
             with tf.variable_scope('LSTM'):
                 for i in range(seq_len):
                     
@@ -215,7 +216,7 @@ class Audio2Video:
         inp             = np.hstack(audio[:-1, :], audio_diff)      # (N-1, 28)
         
         # normalization using pretrained statistics  
-        data = np.load(save_dir+'/inout_data.npz')
+        data = np.load(save_dir+'/inout_stat.npz')
         inps_mean, inps_std = data['inps_mean'], data['inps_std']
         inp  = (inp - inps_mean) / inps_std
         

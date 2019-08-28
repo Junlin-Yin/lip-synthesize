@@ -7,6 +7,7 @@ import time
 import math
 import random
 import bisect
+import pickle
 
 video_dir = 'video/'        # video raw features
 audio_dir = 'audio/'        # audio raw features
@@ -32,6 +33,7 @@ def loadRawFeature(vali_rate):
         
         vsubdir_list = [link + "}}" + str(100+i)[1:3] + '/' for i in range(cnt)]
         for vsubdir in vsubdir_list:
+            print(vsubdir)
             
             # in each video fragments
             vfeatures = np.load(os.path.join(video_dir+vsubdir, 'fidsCoeff.npy'))
@@ -49,8 +51,8 @@ def loadRawFeature(vali_rate):
             outp= np.zeros((aendfr-astartfr, vfeatures.shape[1]))
             for i in range(outp.shape[0]):
                 vfr = audio_timestamp[i+astartfr] * video_fps
-                left_vfr = int(vfr)
-                right_vfr = min(left_vfr+1, vfeatures.shape[0])
+                left_vfr = int(vfr - vstartfr)
+                right_vfr = min(left_vfr+1, vfeatures.shape[0]-1)
                 alpha = vfr - left_vfr
                 outp[i] = (1-alpha) * vfeatures[left_vfr] + alpha * vfeatures[right_vfr]
         
@@ -103,35 +105,39 @@ def loadData(pass_id, args, preprocess=False):
     step_delay = args['step_delay']
     seq_len    = args['seq_len']
     
-    if preprocess or os.path.exists(save_dir+'/inout_data.npz') == False:
+    if preprocess or os.path.exists(save_dir+'/inout_stat.npz') == False:
         # extract raw features from video_dir and audio_dir
         inps, outps = loadRawFeature(vali_rate)
         
         # normalize them
         inps, outps, means, stds = normalizeData(inps, outps)
 
-        # save them to model/inout_data.npz            
-        np.savez(save_dir+'/inout_data.npz', 
-                 inps=inps,          outps=outps, 
+        # save them to save/inout_stat.npz   
+        np.savez(save_dir+'inout_stat.npz', 
                  inps_mean=means[0], outps_mean=means[1],
                  inps_std=stds[0],   outps_std=stds[1])
+        inout_data = {'inps':inps, 'outps':outps}
+        with open(save_dir+'inout_data.pkl', 'wb') as f:
+            pickle.dump(inout_data, f)
     
     # create work space for current pass
     if os.path.exists(save_dir + pass_id + '/') == False:
         os.mkdir(save_dir + pass_id + '/')
             
-    # extract inputs and outputs from model/passId/inout_data.npz
-    inout_data = np.load(save_dir+'/inout_data.npz')
+    # extract inputs and outputs from model/passId/inout_stat
+    with open(save_dir+'inout_data.pkl', 'rb') as f:
+        inout_data = pickle.load(f)
     inps, outps = inout_data['inps'], inout_data['outps']
     
     # deal with step delay
-    new_inps, new_outps = {'training':[], 'validation':[]}
+    new_inps  = {'training':[], 'validation':[]}
+    new_outps = {'training':[], 'validation':[]}
     for key in new_inps.keys():
         for inp, outp in zip(inps[key], outps[key]):
             # throw away those which have less than <step_delay+seq_len> frames
             if inp.shape[0] - step_delay >= seq_len:
                 new_inps[key].append(np.copy(inp[step_delay:, :]))
-                new_outps[key].append(np.copy(outp[:, :-step_delay if step_delay > 0 else None]))
+                new_outps[key].append(np.copy(outp[:(-step_delay if step_delay > 0 else None), :]))
     
     print('loadData() done')
     return new_inps, new_outps
@@ -250,18 +256,5 @@ def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss)
         f.write("%d %f %f\n" % (e+1, trainLoss, validLoss))
         print('loss.log at epoch %d/%d saved' % (e+1, nepochs))
         
-def loadAudioData(audio_path):
-    '''load audio mfcc features from audio_path.
-    This function is designed expecially for predict and only one audio input is allowed
-    ### Parameters
-    audio_path      (str)      audio mfcc feature file path
-    ### Return Values
-    inp             (ndarray)  (N-1, 28) audio input
-    audio_timestamp (ndarray)  (N-1, ) audio timestamp
-    '''
-
-    
-    return inp, audio_timestamp
-
 if __name__ == '__main__':
     print('Hello, World')
