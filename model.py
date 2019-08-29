@@ -8,7 +8,9 @@ import time
 import os
 
 from loadstore import loadData, restoreState, nextBatch, reportBatch, reportEpoch
-from loadstore import save_dir
+from loadstore import save_dir, log_dir
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 class Audio2Video:
     def __init__(self, name, argspath=None):
@@ -24,7 +26,7 @@ class Audio2Video:
         self.args['grad_clip']  = 10    # gradient clipping threshold
         self.args['lr']         = 1e-3  # initial learning rate
         self.args['dr']         = 1     # learning rate's decay rate
-        self.args['b_savef']    = 10    # batch report save frequency
+        self.args['b_savef']    = 20    # batch report save frequency
         self.args['e_savef']    = 5     # epoch report save frequency
         
         if argspath is not None and os.path.exists(argspath):
@@ -77,45 +79,37 @@ class Audio2Video:
             self.output_data= tf.placeholder(tf.float32, [None, seq_len, self.dimout], name='video')
         
         # add dropout wrapper & define multilayer network
-        with tf.name_scope('LSTM'):
-            kp = self.args['keep_prob']
-            total_layers = self.args['nlayers']
-            inner_layers = total_layers - 1
-            cell = tf.nn.rnn_cell.LSTMCell(self.args['dim_hidden'], name='cell')
-            if not predict and kp < 1:
-                cell0 = tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=kp, name='cell0')
-                cell1 = tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=kp, output_keep_prob=kp, name='cell1')
-                network = tf.nn.rnn_cell.MultiRNNCell([cell0]*inner_layers + [cell1])
-            else:
-                # Note that dropout is not used in validation stage
-                network = tf.nn.rnn_cell.MultiRNNCell([cell]*total_layers)
-                        
+        with tf.variable_scope('LSTM'):
+            network = multiLSTM(self.args['dim_hidden'], self.args['nlayers'], self.args['keep_prob'], predict)            
+            
             # define how to generate predicted output
             hiddens = []
             # init_state.shape = (nlayers, 2, batch_size, dimhidden)
-            self.init_state = network.zero_state(batch_size, tf.float32)
-            state = np.copy(self.init_state)
-            with tf.variable_scope('LSTM'):
-                for i in range(seq_len):
-                    
-                    # avoid duplication of name
-                    if i > 0:
-                        tf.get_variable_scope().reuse_variables()
-                    
-                    # one "clock cycle", output_i.shape=[batch_size, dim_hidden]
-                    hidden_i, state = network(self.input_data[:,i,:], state)
-                    hiddens.append(hidden_i)
+            with tf.name_scope('init_state'):
+                self.init_state = network.zero_state(batch_size, tf.float32)
+                state = self.init_state
+            
+            for i in range(seq_len):  
+                # avoid duplication of name
+                if i > 0:
+                    tf.get_variable_scope().reuse_variables()
+                
+                # one "clock cycle", output_i.shape=[batch_size, dim_hidden]
+                hidden_i, state = network(self.input_data[:,i,:], state)
+                hiddens.append(hidden_i)
+            
             self.final_state = state
+
+        # add final weight matrix and final bias vector as said in the paper
+        with tf.variable_scope('finalwb'):
+            final_w = tf.get_variable('w', [self.args['dim_hidden'], self.dimout])
+            final_b = tf.get_variable('b', [self.dimout])        
         
-        with tf.name_scope('predict'):
+        with tf.name_scope('outputs'):
             # hiddens.shape = [batch_size, dim_hidden] * seq_len
             tmp = tf.concat(hiddens, axis=1)
             # tmp.shape = [batch_size, dim_hidden*seq_len]
-            hiddens = tf.reshape(tmp, [None, seq_len, self.args['dim_hidden']])
-            # add final weight matrix and final bias vector as said in the paper
-            with tf.variable_scope('final'):
-                final_w = tf.get_variable('w', [self.args['dim_hidden'], self.dimout])
-                final_b = tf.get_variable('b', [self.dimout])
+            hiddens = tf.reshape(tmp, [-1, seq_len, self.args['dim_hidden']])
             # hiddens.shape = [batch_size, seq_len, dim_hidden]
             output_hat = tf.nn.xw_plus_b(hiddens, final_w, final_b, name='output_hat')
             self.output = output_hat
@@ -141,17 +135,23 @@ class Audio2Video:
         init_lr, dr = self.args['lr'], self.args['dr']
         
         self.LSTM_model(predict=False)
-        print('LSTM_model() done')
         
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
             
-            if showGraph:
-                writer = tf.summary.FileWriter('./log', sess.graph)
-                writer.close()               
-            
             # restore model states
             startEpoch, saver = restoreState(sess, self.pass_id)
+            
+            if showGraph:
+                # clear log dir
+                logs = os.listdir(log_dir)
+                for log in logs:
+                    os.remove(log_dir+log)
+                    
+                # create tensorboard file
+                writer = tf.summary.FileWriter(log_dir, sess.graph)
+                writer.close()
+                
             endEpoch = self.args['nepochs']
             for e in range(startEpoch, endEpoch):
                 # in each epoch (totally <nbatches> batches per epoch)
@@ -178,7 +178,7 @@ class Audio2Video:
                                      outps      = self.outps, 
                                      mode       = 'training', 
                                      batch_pt   = self.batch_pt, 
-                                     nbathces   = self.nbatches, 
+                                     nbatches   = self.nbatches, 
                                      args       = self.args)
                     feed_dict[self.input_data], feed_dict[self.output_data] = x, y
                     
@@ -199,7 +199,7 @@ class Audio2Video:
                                      outps      = self.outps, 
                                      mode       = 'validation', 
                                      batch_pt   = self.batch_pt, 
-                                     nbathces   = self.nbatches, 
+                                     nbatches   = self.nbatches, 
                                      args       = self.args)
                     feed_dict[self.input_data], feed_dict[self.output_data] = x, y                  
                     vloss, = sess.run(fetches, feed_dict)
@@ -207,9 +207,9 @@ class Audio2Video:
                 validLoss /= self.nbatches['validation']
                 reportEpoch(self.pass_id, sess, saver, e, self.args['nepochs'], self.args['e_savef'], trainLoss, validLoss)
         
-    def predict(self, audio_path):
+    def test(self, audiopath):
         # get audio features
-        afeatures = np.load(audio_path)
+        afeatures = np.load(audiopath)
         audio           = afeatures[ :, :-1]                        # (N, 14)
         audio_diff      = afeatures[1:, :-1] - afeatures[:-1, :-1]  # (N-1, 14)
         audio_timestamp = afeatures[ :-1,-1]                        # (N-1, )
@@ -262,10 +262,34 @@ class Audio2Video:
         outps_mean, outps_std = data['outps_mean'], data['outps_std']
         outp = outp * outps_std + outps_mean
         
-        res_dir, _ = os.path.split(audio_path)
+        res_dir, _ = os.path.split(audiopath)
         np.savez(res_dir+'/result.npz', outp=outp, times=audio_timestamp, step_delay=step_delay)
-        
+
+def multiLSTM(dim_hidden, nlayers, kp, predict=False):                      
+    if not predict and kp < 1:
+        cell_list = []
+        for i in range(nlayers):
+            cell = tf.nn.rnn_cell.LSTMCell(dim_hidden)
+            ikp, okp = kp, (1.0 if i < nlayers-1 else kp)
+            cell = tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=ikp, output_keep_prob=okp)
+            cell_list.append(cell)
+    else:
+        cell_list = [tf.nn.rnn_cell.LSTMCell(dim_hidden) for i in range(nlayers)]
+    
+    network = tf.nn.rnn_cell.MultiRNNCell(cell_list)
+    return network
+                    
 if __name__ == '__main__':
-    a2v = Audio2Video('test')
-    a2v.train(showGraph=True)
-        
+    # important parameters
+    name        = 'test'
+    argspath    = None
+    audiopath  = None
+    showGraph   = False
+    predict     = False
+    
+    a2v = Audio2Video(name=name, argspath=argspath)
+    if not predict:
+        a2v.train(showGraph=showGraph)
+    else:
+        a2v.test(audiopath=audiopath)
+    

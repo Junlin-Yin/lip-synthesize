@@ -12,6 +12,7 @@ import pickle
 video_dir = 'video/'        # video raw features
 audio_dir = 'audio/'        # audio raw features
 save_dir  = 'save/'         # network saved data
+log_dir   = 'log/'          # tensorboard data
 
 video_fps = 30
 
@@ -59,8 +60,7 @@ def loadRawFeature(vali_rate):
             # deciding training or validation
             key = 'training' if random.random() > vali_rate else 'validation'
             inps[key].append(inp)
-            outps[key].append(outp)
-    print('loadRawFeature() done')        
+            outps[key].append(outp)      
     return inps, outps
 
 def normalizeData(inps, outps):
@@ -87,7 +87,6 @@ def normalizeData(inps, outps):
     norm_inps  = {'training':tinps, 'validation':vinps}
     norm_outps = {'training':toutps, 'validation':voutps}
     
-    print('normalizeData() done')
     return norm_inps, norm_outps, means, stds
 
 def loadData(pass_id, args, preprocess=False):
@@ -124,7 +123,7 @@ def loadData(pass_id, args, preprocess=False):
     if os.path.exists(save_dir + pass_id + '/') == False:
         os.mkdir(save_dir + pass_id + '/')
             
-    # extract inputs and outputs from model/passId/inout_stat
+    # extract inputs and outputs from save/passId/inout_stat
     with open(save_dir+'inout_data.pkl', 'rb') as f:
         inout_data = pickle.load(f)
     inps, outps = inout_data['inps'], inout_data['outps']
@@ -139,7 +138,6 @@ def loadData(pass_id, args, preprocess=False):
                 new_inps[key].append(np.copy(inp[step_delay:, :]))
                 new_outps[key].append(np.copy(outp[:(-step_delay if step_delay > 0 else None), :]))
     
-    print('loadData() done')
     return new_inps, new_outps
 
 def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
@@ -164,7 +162,7 @@ def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
         inp, outp = inps[mode][idx], outps[mode][idx]
 
         # formatting each sequence randomly
-        startfr = random.randint([0, inp.shape[0]-seq_len-1])
+        startfr = random.randint(0, inp.shape[0]-seq_len-1)
         x.append(np.copy(inp[startfr : startfr+seq_len]))
         y.append(np.copy(outp[startfr: startfr+seq_len]))
         
@@ -194,10 +192,12 @@ def restoreState(sess, pass_id):
     if last_ckpt is None:
         # no ckpt file yet
         startEpoch = 0
+        print('train from the very beginning')
     else:
         startEpoch = int(last_ckpt.split('-')[-1])
-        saver.restore(sess, save_dir+pass_id)
-    
+        saver.restore(sess, last_ckpt)
+        print('train from epoch', startEpoch+1)
+            
     return startEpoch, saver
         
 def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
@@ -219,7 +219,6 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
     m, s = divmod(eta_time, 60)
     h, m = divmod(m, 60)
     eta_str = "%d:%02d:%02d" % (h, m, s)
-    cur_str = time.strftime("%m-%d %H:%M:%S", time.localtime(time.time()))
     
     # initialize log file
     if cur_batches == 0:
@@ -227,12 +226,12 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
             f.write("0 %f %f\n" % (tloss, tloss))
     
     # print & save batch report
-    report = "epoch:%d/%d batch:%d/%d tloss:%f cur_time:%s eta_time:%s" % (e+1, nepochs, b+1, nbatches, tloss, cur_str, eta_str)
-    if b % b_savef == 0 or b == nbatches - 1:
+    report = "epoch:%d/%d batch:%d/%d tloss:%f eta_time:%s" % (e+1, nepochs, b+1, nbatches, tloss, eta_str)
+    if b == 0 or (b+1) % b_savef == 0 or b == nbatches - 1:
         with open(save_dir+pass_id+'/progress.log', 'w') as f:
             f.write(report)
-            print('progress.log at epoch %d/%d, batch %d/%d saved' % (e+1, nepochs, b+1, nbatches))
-    print(report)
+#        print('progress.log at epoch %d/%d, batch %d/%d saved' % (e+1, nepochs, b+1, nbatches))
+        print(report)
 
 def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss):
     '''summary after each epoch
@@ -248,13 +247,16 @@ def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss)
     '''
     # save checkpoint
     if (e+1) % e_savef == 0 or e == nepochs - 1:
-        saver.save(sess, save_dir+pass_id, global_step=e+1)
+        saver.save(sess, save_dir+pass_id+'/model', global_step=e+1)
         print('checkpoint at epoch %d/%d saved' % (e+1, nepochs))
         
     # report loss
-    with open(save_dir+pass_id+'/loss.log', 'a') as f:
-        f.write("%d %f %f\n" % (e+1, trainLoss, validLoss))
-        print('loss.log at epoch %d/%d saved' % (e+1, nepochs))
+    with open(save_dir+pass_id+'/loss.log', 'r') as f:
+        records = f.readlines()[:e+1]
+    records.append("%d %f %f\n" % (e+1, trainLoss, validLoss))
+    with open(save_dir+pass_id+'/loss.log', 'w') as f:
+        f.write(''.join(records))
+    print('loss.log at epoch %d/%d saved' % (e+1, nepochs))
         
 if __name__ == '__main__':
     print('Hello, World')
