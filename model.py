@@ -13,36 +13,23 @@ from loadstore import save_dir, log_dir
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 class Audio2Video:
-    def __init__(self, name, argspath=None):
-        self.args = {}
-        self.args['vr']         = 0.2   # validation set ratio
-        self.args['step_delay'] = 20    # step delay for LSTM (10ms per step)
-        self.args['dim_hidden'] = 60    # dimension of hidden layer and cell state
-        self.args['nlayers']    = 1     # number of LSTM layers
-        self.args['keep_prob']  = 1     # dropout keep probability
-        self.args['seq_len']    = 100   # sequence length (nframes per sequence)
-        self.args['batch_size'] = 100   # batch size (nseq per batch)
-        self.args['nepochs']    = 300   # number of epochs
-        self.args['grad_clip']  = 10    # gradient clipping threshold
-        self.args['lr']         = 1e-3  # initial learning rate
-        self.args['dr']         = 1     # learning rate's decay rate
-        self.args['b_savef']    = 20    # batch report save frequency
-        self.args['e_savef']    = 5     # epoch report save frequency
-        
+    def __init__(self, args, name, argspath=None, preprocess=False, outp_norm=False):
+        self.args = args
         if argspath is not None and os.path.exists(argspath):
             data = pd.read_csv(argspath, delimiter='\t')
             for key, value in zip(data['key'], data['value']):
                 self.args[key] = value
                 
         self.pass_id = name
-        self.initData()
+        self.initData(preprocess, outp_norm)
                 
-    def initData(self):
+    def initData(self, preprocess=False, outp_norm=False):
         '''Load data for training and do some more initialization
         '''
         self.inps, self.outps = loadData(pass_id      = self.pass_id,
                                          args         = self.args,
-                                         preprocess   = False)
+                                         preprocess   = preprocess,
+                                         outp_norm    = outp_norm)
         # In this network, self.dimin = 28, self.dimout = 20
         self.dimin, self.dimout = self.inps['training'][0].shape[1], self.outps['training'][0].shape[1]
         
@@ -279,17 +266,6 @@ def multiLSTM(dim_hidden, nlayers, kp, predict=False):
     network = tf.nn.rnn_cell.MultiRNNCell(cell_list)
     return network
                     
-if __name__ == '__main__':
-    # important parameters
-    name        = 'test'
-    argspath    = None
-    audiopath  = None
-    showGraph   = False
-    predict     = False
-    
-    a2v = Audio2Video(name=name, argspath=argspath)
-    if not predict:
-        a2v.train(showGraph=showGraph)
-    else:
-        a2v.test(audiopath=audiopath)
+if __name__ == "__main__":
+    print('Hello, World')
     

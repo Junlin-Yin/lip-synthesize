@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 import os
@@ -63,7 +64,7 @@ def loadRawFeature(vali_rate):
             outps[key].append(outp)      
     return inps, outps
 
-def normalizeData(inps, outps):
+def normalizeData(inps, outps, outp_norm=False):
     tinps, toutps = inps['training'], outps['training']
     vinps, voutps = inps['validation'], outps['validation']
     
@@ -72,8 +73,14 @@ def normalizeData(inps, outps):
         # idx = 0: inps
         # idx = 1: outps
         merged_data = np.vstack(data)        # merged_data.shape = (?, F)
-        means[idx] = np.mean(merged_data, axis=0)
-        stds[idx]  = np.std(merged_data, axis=0)
+
+        if idx == 1 and outp_norm == False:
+            # do not normalize output data
+            means[idx] = np.zeros((merged_data.shape[1],))
+            stds[idx]  = np.ones((merged_data.shape[1],))
+        else:
+            means[idx] = np.mean(merged_data, axis=0)
+            stds[idx]  = np.std(merged_data, axis=0)
         
         for i in range(len(data)):
             data[i] = (data[i] - means[idx]) / stds[idx]
@@ -84,12 +91,17 @@ def normalizeData(inps, outps):
         for i in range(len(data)):
             data[i] = (data[i] - means[idx]) / stds[idx]
 
+    print('inps.mean ', means[0])
+    print('inps.std  ', stds[0])
+    print('outps.mean', means[1])
+    print('outps.std ', stds[1])
+
     norm_inps  = {'training':tinps, 'validation':vinps}
     norm_outps = {'training':toutps, 'validation':voutps}
     
     return norm_inps, norm_outps, means, stds
 
-def loadData(pass_id, args, preprocess=False):
+def loadData(pass_id, args, preprocess=False, outp_norm=False):
     '''load input and output from save_dir, or from video_dir and audio_dir
     if preprocessing is needed.
     ### Parameters
@@ -109,7 +121,7 @@ def loadData(pass_id, args, preprocess=False):
         inps, outps = loadRawFeature(vali_rate)
         
         # normalize them
-        inps, outps, means, stds = normalizeData(inps, outps)
+        inps, outps, means, stds = normalizeData(inps, outps, outp_norm=outp_norm)
 
         # save them to save/inout_stat.npz   
         np.savez(save_dir+'inout_stat.npz', 
@@ -218,7 +230,7 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
     eta_time = round(eta_batches * b_during)
     m, s = divmod(eta_time, 60)
     h, m = divmod(m, 60)
-    eta_str = "%d:%02d:%02d" % (h, m, s)
+    eta_str = "%02d:%02d:%02d" % (h, m, s)
     
     # initialize log file
     if cur_batches == 0:
@@ -228,9 +240,6 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
     # print & save batch report
     report = "epoch:%d/%d batch:%d/%d tloss:%f eta_time:%s" % (e+1, nepochs, b+1, nbatches, tloss, eta_str)
     if b == 0 or (b+1) % b_savef == 0 or b == nbatches - 1:
-        with open(save_dir+pass_id+'/progress.log', 'w') as f:
-            f.write(report)
-#        print('progress.log at epoch %d/%d, batch %d/%d saved' % (e+1, nepochs, b+1, nbatches))
         print(report)
 
 def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss):
@@ -257,6 +266,25 @@ def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss)
     with open(save_dir+pass_id+'/loss.log', 'w') as f:
         f.write(''.join(records))
     print('loss.log at epoch %d/%d saved' % (e+1, nepochs))
+
+def plotLoss(pass_id):
+    with open(save_dir+pass_id+'/loss.log', 'r') as f:
+        records = f.readlines()
+    xs = list(range(len(records)))
+    ts, vs = [], []
+    for record in records:
+        e, t, v = record.split()
+        ts.append(float(t))
+        vs.append(float(v))
+
+    plt.figure()
+    plt.title(pass_id+'/loss')
+    plt.plot(xs, ts, color='blue', label='training loss')
+    plt.plot(xs, vs, color='red', label='validation loss')
+    plt.legend() # 显示图例
+    plt.xlabel('epoch')
+    plt.show()
         
 if __name__ == '__main__':
-    print('Hello, World')
+    name = 'L1-h60-d20-u'
+    plotLoss(name)
