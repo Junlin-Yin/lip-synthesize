@@ -44,7 +44,7 @@ class Audio2Video:
             self.batch_pt[key] = 0
         self.total_batches = self.nbatches['training'] * self.args['nepochs']
         
-    def LSTM_model(self, predict=False):  # WARNING, mode here is WRONG!
+    def LSTM_model(self, predict=False):
         '''Construct LSTM network for lip synthesizing
         ### Parameters
         mode          training or validation \\
@@ -74,21 +74,38 @@ class Audio2Video:
             # init_state.shape = (nlayers, 2, batch_size, dimhidden)
             with tf.name_scope('init_state'):
                 self.init_state = network.zero_state(batch_size, tf.float32)
-                state = self.init_state
-            
-            for i in range(seq_len):  
-                # avoid duplication of name
-                if i > 0:
-                    tf.get_variable_scope().reuse_variables()
-                
-                # one "clock cycle", output_i.shape=[batch_size, dim_hidden]
-                hidden_i, state = network(self.input_data[:,i,:], state)
-                hiddens.append(hidden_i)
-            
+
+#################### previous version ##########################
+#            state = self.init_state
+#            for i in range(seq_len):  
+#                # avoid duplication of name
+#                if i > 0:
+#                    tf.get_variable_scope().reuse_variables()
+#                
+#                # one "clock cycle", output_i.shape=[batch_size, dim_hidden]
+#                hidden_i, state = network(self.input_data[:,i,:], state)
+#                hiddens.append(hidden_i)
+################################################################            
+
+#################### reference version #########################
+#            # inputs.shape: [batch_size, seq_length, dimin] -> [batch_size, 1, dimin] * seq_length
+#            inputs = tf.split(1, args.seq_length, self.input_data)
+#            # inputs.shape: [batch_size, 1, dimin] * seq_length -> [batch_size, dimin] * seq_length
+#            inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
+#        
+#            outputs, states = tf.nn.seq2seq.rnn_decoder(inputs, self.initial_state, self.network, loop_function=None, scope='rnnlm')            
+################################################################
+
+#################### new version ###############################
+            inputs = tf.split(self.input_data, seq_len, 1)
+            inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
+            # inputs.shape: [batch_size, dimin] * seq_len
+            hiddens, state = tf.contrib.legacy_seq2seq.rnn_decoder(inputs, self.init_state, network, loop_function=None)
+################################################################        
             self.final_state = state
 
         # add final weight matrix and final bias vector as said in the paper
-        with tf.variable_scope('finalwb'):
+        with tf.variable_scope('final_wb'):
             final_w = tf.get_variable('w', [self.args['dim_hidden'], self.dimout])
             final_b = tf.get_variable('b', [self.dimout])        
         
@@ -155,9 +172,11 @@ class Audio2Video:
                     
                 # reset batch pointers
                 self.batch_pt['training'] = self.batch_pt['validation'] = 0
+                
+                trainLoss = 0
                     
                 # define fetch list
-                fetches = [self.loss, self.train_op]          
+                fetches = [self.loss, self.output, self.train_op]          
                 for b in range(self.nbatches['training']):
                     begin = time.time()
                     # in each batch (totally <nseq> sequences per epoch)
@@ -170,11 +189,12 @@ class Audio2Video:
                     feed_dict[self.input_data], feed_dict[self.output_data] = x, y
                     
                     # do training in this step, get the loss
-                    tloss, _ = sess.run(fetches, feed_dict)
+                    tloss, y_hat, _ = sess.run(fetches, feed_dict)
+                    trainLoss += tloss
                     reportBatch(self.pass_id, e, b, self.args['nepochs'], self.nbatches['training'], time.time()-begin, self.args['b_savef'], tloss)
                     
                 # at the end of each epoch, do validation
-                trainLoss = tloss       # final training loss at each epoch
+                trainLoss /= self.nbatches['training']       # final training loss at each epoch
                 validLoss = 0
              
                 # define fetch list 

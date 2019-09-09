@@ -1,3 +1,5 @@
+normalized/
+unnormalized/
 *.npy
 *.npz
 *.pkl

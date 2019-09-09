@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
 import os
-import time
 import math
 import random
 import bisect
@@ -91,10 +90,10 @@ def normalizeData(inps, outps, outp_norm=False):
         for i in range(len(data)):
             data[i] = (data[i] - means[idx]) / stds[idx]
 
-    print('inps.mean ', means[0])
-    print('inps.std  ', stds[0])
-    print('outps.mean', means[1])
-    print('outps.std ', stds[1])
+#    print('inps.mean ', means[0])
+#    print('inps.std  ', stds[0])
+#    print('outps.mean', means[1])
+#    print('outps.std ', stds[1])
 
     norm_inps  = {'training':tinps, 'validation':vinps}
     norm_outps = {'training':toutps, 'validation':voutps}
@@ -270,9 +269,9 @@ def reportEpoch(pass_id, sess, saver, e, nepochs, e_savef, trainLoss, validLoss)
 def plotLoss(pass_id):
     with open(save_dir+pass_id+'/loss.log', 'r') as f:
         records = f.readlines()
-    xs = list(range(len(records)))
+    xs = list(range(1, len(records)))
     ts, vs = [], []
-    for record in records:
+    for record in records[1:]:
         e, t, v = record.split()
         ts.append(float(t))
         vs.append(float(v))
@@ -283,6 +282,7 @@ def plotLoss(pass_id):
     plt.plot(xs, vs, color='red', label='validation loss')
     plt.legend() # 显示图例
     plt.xlabel('epoch')
+    plt.savefig(save_dir+pass_id+'/loss.jpg')
     plt.show()
         
 if __name__ == '__main__':
