@@ -11,6 +11,8 @@ from loadstore import loadData, restoreState, nextBatch, reportBatch, reportEpoc
 from loadstore import save_dir, log_dir
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+from tensorflow.python.util import deprecation
+deprecation._PRINT_DEPRECATION_WARNINGS = False
 
 class Audio2Video:
     def __init__(self, args, name, argspath=None, preprocess=False, outp_norm=False):
@@ -66,16 +68,16 @@ class Audio2Video:
             self.output_data= tf.placeholder(tf.float32, [None, seq_len, self.dimout], name='video')
         
         # add dropout wrapper & define multilayer network
-        with tf.variable_scope('LSTM'):
-            network = multiLSTM(self.args['dim_hidden'], self.args['nlayers'], self.args['keep_prob'], predict)            
+        network = multiLSTM(self.args['dim_hidden'], self.args['nlayers'], self.args['keep_prob'], predict) 
+        
+        # init_state.shape = (nlayers, 2, batch_size, dimhidden)
+        with tf.name_scope('init_state'):
+            self.init_state = network.zero_state(batch_size, tf.float32)    
             
-            # define how to generate predicted output
-            hiddens = []
-            # init_state.shape = (nlayers, 2, batch_size, dimhidden)
-            with tf.name_scope('init_state'):
-                self.init_state = network.zero_state(batch_size, tf.float32)
-
 #################### previous version ##########################
+#        with tf.variable_scope('LSTM'):
+#            # define how to generate predicted output
+#            hiddens = []
 #            state = self.init_state
 #            for i in range(seq_len):  
 #                # avoid duplication of name
@@ -88,21 +90,22 @@ class Audio2Video:
 ################################################################            
 
 #################### reference version #########################
-#            # inputs.shape: [batch_size, seq_length, dimin] -> [batch_size, 1, dimin] * seq_length
-#            inputs = tf.split(1, args.seq_length, self.input_data)
-#            # inputs.shape: [batch_size, 1, dimin] * seq_length -> [batch_size, dimin] * seq_length
-#            inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
-#        
-#            outputs, states = tf.nn.seq2seq.rnn_decoder(inputs, self.initial_state, self.network, loop_function=None, scope='rnnlm')            
+#        # inputs.shape: [batch_size, seq_length, dimin] -> [batch_size, 1, dimin] * seq_length
+#        inputs = tf.split(1, args.seq_length, self.input_data)
+#        # inputs.shape: [batch_size, 1, dimin] * seq_length -> [batch_size, dimin] * seq_length
+#        inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
+#    
+#        outputs, states = tf.nn.seq2seq.rnn_decoder(inputs, self.initial_state, self.network, loop_function=None, scope='rnnlm')            
 ################################################################
 
 #################### new version ###############################
-            inputs = tf.split(self.input_data, seq_len, 1)
-            inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
-            # inputs.shape: [batch_size, dimin] * seq_len
-            hiddens, state = tf.contrib.legacy_seq2seq.rnn_decoder(inputs, self.init_state, network, loop_function=None)
+        inputs = tf.split(self.input_data, seq_len, 1)
+        inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
+        # inputs.shape: [batch_size, dimin] * seq_len
+        # hiddens.shape = [batch_size, dim_hidden] * seq_len
+        hiddens, state = tf.contrib.legacy_seq2seq.rnn_decoder(inputs, self.init_state, network, loop_function=None)
 ################################################################        
-            self.final_state = state
+        self.final_state = state
 
         # add final weight matrix and final bias vector as said in the paper
         with tf.variable_scope('final_wb'):
@@ -110,18 +113,19 @@ class Audio2Video:
             final_b = tf.get_variable('b', [self.dimout])        
         
         with tf.name_scope('outputs'):
-            # hiddens.shape = [batch_size, dim_hidden] * seq_len
-            tmp = tf.concat(hiddens, axis=1)
             # tmp.shape = [batch_size, dim_hidden*seq_len]
-            hiddens = tf.reshape(tmp, [-1, seq_len, self.args['dim_hidden']])
-            # hiddens.shape = [batch_size, seq_len, dim_hidden]
-            output_hat = tf.nn.xw_plus_b(hiddens, final_w, final_b, name='output_hat')
-            self.output = output_hat
-            # output_hat.shape = [batch_size, seq_len, dim_out]
+            tmp = tf.concat(hiddens, axis=1)
+            # hidden_flat.shape = [batch_size*seq_len, dim_hidden]
+            hidden_flat = tf.reshape(tmp, [-1, self.args['dim_hidden']])
+            # output_hat_flat.shape = [batch_size*seq_len, dimout]
+            output_hat_flat = tf.nn.xw_plus_b(hidden_flat, final_w, final_b, name='output_hat')
+            
+            # self.output.shape = [batch_size, seq_len, dimout]
+            self.output = tf.reshape(output_hat_flat, [-1, seq_len, self.dimout])
         
         # define loss function (L2-norm error)
         with tf.name_scope('loss'):
-            self.loss = tf.reduce_mean(tf.squared_difference(output_hat, self.output_data))
+            self.loss = tf.reduce_mean(tf.squared_difference(self.output, self.output_data))
       
         # deal with gradient and optimization
         with tf.name_scope('train'):

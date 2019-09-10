@@ -12,6 +12,7 @@ import pickle
 video_dir = 'video/'        # video raw features
 audio_dir = 'audio/'        # audio raw features
 save_dir  = 'save/'         # network saved data
+data_dir  = 'data/'         # processed data
 log_dir   = 'log/'          # tensorboard data
 
 video_fps = 30
@@ -54,7 +55,7 @@ def loadRawFeature(vali_rate):
                 vfr = audio_timestamp[i+astartfr] * video_fps
                 left_vfr = int(vfr - vstartfr)
                 right_vfr = min(left_vfr+1, vfeatures.shape[0]-1)
-                alpha = vfr - left_vfr
+                alpha = vfr - vstartfr - left_vfr
                 outp[i] = (1-alpha) * vfeatures[left_vfr] + alpha * vfeatures[right_vfr]
         
             # deciding training or validation
@@ -89,16 +90,8 @@ def normalizeData(inps, outps, outp_norm=False):
         # idx = 1: outps
         for i in range(len(data)):
             data[i] = (data[i] - means[idx]) / stds[idx]
-
-#    print('inps.mean ', means[0])
-#    print('inps.std  ', stds[0])
-#    print('outps.mean', means[1])
-#    print('outps.std ', stds[1])
-
-    norm_inps  = {'training':tinps, 'validation':vinps}
-    norm_outps = {'training':toutps, 'validation':voutps}
     
-    return norm_inps, norm_outps, means, stds
+    return inps, outps, means, stds
 
 def loadData(pass_id, args, preprocess=False, outp_norm=False):
     '''load input and output from save_dir, or from video_dir and audio_dir
@@ -115,19 +108,18 @@ def loadData(pass_id, args, preprocess=False, outp_norm=False):
     step_delay = args['step_delay']
     seq_len    = args['seq_len']
     
-    if preprocess or os.path.exists(save_dir+'/inout_stat.npz') == False:
+    if preprocess or os.path.exists(data_dir+pass_id+'-data.pkl') == False:
         # extract raw features from video_dir and audio_dir
         inps, outps = loadRawFeature(vali_rate)
         
         # normalize them
         inps, outps, means, stds = normalizeData(inps, outps, outp_norm=outp_norm)
 
-        # save them to save/inout_stat.npz   
-        np.savez(save_dir+'inout_stat.npz', 
-                 inps_mean=means[0], outps_mean=means[1],
-                 inps_std=stds[0],   outps_std=stds[1])
-        inout_data = {'inps':inps, 'outps':outps}
-        with open(save_dir+'inout_data.pkl', 'wb') as f:
+        # save them to ...-data.pkl  
+        inout_data = {'inps':inps,      'outps':outps,
+                      'imean':means[0], 'omean':means[1],
+                      'istd':stds[0],   'ostd':stds[1]}
+        with open(data_dir+pass_id+'-data.pkl', 'wb') as f:
             pickle.dump(inout_data, f)
     
     # create work space for current pass
@@ -135,7 +127,7 @@ def loadData(pass_id, args, preprocess=False, outp_norm=False):
         os.mkdir(save_dir + pass_id + '/')
             
     # extract inputs and outputs from save/passId/inout_stat
-    with open(save_dir+'inout_data.pkl', 'rb') as f:
+    with open(data_dir+pass_id+'-data.pkl', 'rb') as f:
         inout_data = pickle.load(f)
     inps, outps = inout_data['inps'], inout_data['outps']
     
@@ -161,8 +153,8 @@ def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
     nbatches (dict) number-of-batch dictionary containing two modes \\
     args     (dict) argument dictionary containing batch_size, seq_len, etc. \\
     ### Return Values
-    x        (list of ndarrays) input batch \\
-    y        (list of ndarrays) output batch
+    x        (ndarray) input batch \\
+    y        (ndarray) output batch
     '''
     batch_size = args['batch_size']
     seq_len    = args['seq_len']
@@ -173,7 +165,7 @@ def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
         inp, outp = inps[mode][idx], outps[mode][idx]
 
         # formatting each sequence randomly
-        startfr = random.randint(0, inp.shape[0]-seq_len-1)
+        startfr = random.randint(0, inp.shape[0]-seq_len)
         x.append(np.copy(inp[startfr : startfr+seq_len]))
         y.append(np.copy(outp[startfr: startfr+seq_len]))
         
@@ -184,7 +176,8 @@ def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
             # then E(X) = nseq
             batch_pt[mode] = (batch_pt[mode] + 1) % nbatches[mode]
         
-    return np.array(x), np.array(y)
+    x, y = np.array(x), np.array(y)
+    return x, y
 
 def restoreState(sess, pass_id):
     '''restore network states
@@ -237,7 +230,7 @@ def reportBatch(pass_id, e, b, nepochs, nbatches, b_during, b_savef, tloss):
             f.write("0 %f %f\n" % (tloss, tloss))
     
     # print & save batch report
-    report = "epoch:%d/%d batch:%d/%d tloss:%f eta_time:%s" % (e+1, nepochs, b+1, nbatches, tloss, eta_str)
+    report = "epoch:%03d/%03d batch:%03d/%03d tloss:%8.6f eta_time:%s" % (e+1, nepochs, b+1, nbatches, tloss, eta_str)
     if b == 0 or (b+1) % b_savef == 0 or b == nbatches - 1:
         print(report)
 
@@ -282,7 +275,7 @@ def plotLoss(pass_id):
     plt.plot(xs, vs, color='red', label='validation loss')
     plt.legend() # 显示图例
     plt.xlabel('epoch')
-    plt.savefig(save_dir+pass_id+'/loss.jpg')
+    plt.savefig(save_dir+pass_id+'/loss.png')
     plt.show()
         
 if __name__ == '__main__':
