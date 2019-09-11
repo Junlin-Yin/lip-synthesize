@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from model import Audio2Video
-from loadstore import plotLoss
+from loadstore import plotLoss, pred_dir
 
 # important parameters
 args = {}
@@ -18,21 +18,22 @@ args['dr']         = 0.99  # learning rate's decay rate
 args['b_savef']    = 50    # batch report save frequency
 args['e_savef']    = 5     # epoch report save frequency
 
-name        = 'L1-h60-d20-u'
-argspath    = None
-audiopath   = None
-showGraph   = False
-predict     = False
-preprocess  = False
-outp_norm   = False
+args['pass_id']    = 'L1-h60-d20-u'
+args['argspath']   = None
+args['showGraph']  = False
+args['preprocess'] = False
+args['outp_norm']  = False
+
+predict   = True
+audiopath = pred_dir+'test037.npy'
 
 def run():
-    a2v = Audio2Video(name=name, args=args, argspath=argspath, preprocess=preprocess, outp_norm=outp_norm)
+    a2v = Audio2Video(args=args)
     if not predict:
-        a2v.train(showGraph=showGraph)
+        a2v.train()
+        plotLoss(args['pass_id'])
     else:
         a2v.test(audiopath=audiopath)
 
 if __name__ == '__main__':
     run()
-    plotLoss(name)

@@ -9,11 +9,13 @@ import random
 import bisect
 import pickle
 
+# important paths
 video_dir = 'video/'        # video raw features
 audio_dir = 'audio/'        # audio raw features
 save_dir  = 'save/'         # network saved data
 data_dir  = 'data/'         # processed data
 log_dir   = 'log/'          # tensorboard data
+pred_dir  = 'predict/'      # predict data
 
 video_fps = 30
 
@@ -178,6 +180,20 @@ def nextBatch(inps, outps, mode, batch_pt, nbatches, args):
         
     x, y = np.array(x), np.array(y)
     return x, y
+
+def saveArgs(pass_id, args):
+    with open(save_dir+pass_id+'/args.pkl', 'wb') as f:
+        pickle.dump(args, f)
+        
+def loadArgs(pass_id):
+    with open(save_dir+pass_id+'/args.pkl', 'rb') as f:
+        args = pickle.load(f)
+    return args
+
+def loadStat(pass_id):
+    with open(data_dir+pass_id+'-data.pkl', 'rb') as f:
+        data = pickle.load(f)
+    return data['imean'], data['istd'], data['omean'], data['ostd']
 
 def restoreState(sess, pass_id):
     '''restore network states

@@ -8,6 +8,7 @@ import time
 import os
 
 from loadstore import loadData, restoreState, nextBatch, reportBatch, reportEpoch
+from loadstore import saveArgs, loadStat
 from loadstore import save_dir, log_dir
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -15,15 +16,16 @@ from tensorflow.python.util import deprecation
 deprecation._PRINT_DEPRECATION_WARNINGS = False
 
 class Audio2Video:
-    def __init__(self, args, name, argspath=None, preprocess=False, outp_norm=False):
+    def __init__(self, args):
         self.args = args
+        argspath = args['argspath']
         if argspath is not None and os.path.exists(argspath):
             data = pd.read_csv(argspath, delimiter='\t')
             for key, value in zip(data['key'], data['value']):
                 self.args[key] = value
                 
-        self.pass_id = name
-        self.initData(preprocess, outp_norm)
+        self.pass_id = args['pass_id']
+        self.initData(args['preprocess'], args['outp_norm'])
                 
     def initData(self, preprocess=False, outp_norm=False):
         '''Load data for training and do some more initialization
@@ -89,15 +91,6 @@ class Audio2Video:
 #                hiddens.append(hidden_i)
 ################################################################            
 
-#################### reference version #########################
-#        # inputs.shape: [batch_size, seq_length, dimin] -> [batch_size, 1, dimin] * seq_length
-#        inputs = tf.split(1, args.seq_length, self.input_data)
-#        # inputs.shape: [batch_size, 1, dimin] * seq_length -> [batch_size, dimin] * seq_length
-#        inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
-#    
-#        outputs, states = tf.nn.seq2seq.rnn_decoder(inputs, self.initial_state, self.network, loop_function=None, scope='rnnlm')            
-################################################################
-
 #################### new version ###############################
         inputs = tf.split(self.input_data, seq_len, 1)
         inputs = [tf.squeeze(input_, [1]) for input_ in inputs]
@@ -138,9 +131,11 @@ class Audio2Video:
             optimizer = tf.compat.v1.train.AdamOptimizer(self.lr)
             self.train_op = optimizer.apply_gradients(zip(grads, tvars))
         
-    def train(self, showGraph=True):
+    def train(self):
         feed_dict = {}
         init_lr, dr = self.args['lr'], self.args['dr']
+        
+        saveArgs(self.pass_id, self.args)
         
         self.LSTM_model(predict=False)
         
@@ -150,7 +145,7 @@ class Audio2Video:
             # restore model states
             startEpoch, saver = restoreState(sess, self.pass_id)
             
-            if showGraph:
+            if self.args['showGraph']:
                 # clear log dir
                 logs = os.listdir(log_dir)
                 for log in logs:
@@ -223,22 +218,21 @@ class Audio2Video:
         afeatures = np.load(audiopath)
         audio           = afeatures[ :, :-1]                        # (N, 14)
         audio_diff      = afeatures[1:, :-1] - afeatures[:-1, :-1]  # (N-1, 14)
-        audio_timestamp = afeatures[ :-1,-1]                        # (N-1, )
-        inp             = np.hstack(audio[:-1, :], audio_diff)      # (N-1, 28)
+        audio_timestamp = afeatures[ :,  -1]                        # (N-1, )
+        inp             = np.hstack((audio[:-1, :], audio_diff))      # (N-1, 28)
         
-        # normalization using pretrained statistics  
-        data = np.load(save_dir+'/inout_stat.npz')
-        inps_mean, inps_std = data['inps_mean'], data['inps_std']
-        inp  = (inp - inps_mean) / inps_std
+        # normalization using pretrained statistics
+        imean, istd, omean, ostd = loadStat(self.pass_id)
+        inp  = (inp - imean) / istd
         
         step_delay = self.args['step_delay']
         outp_list = [0]*(inp.shape[0]-step_delay)
         
         # construct predict network
         self.LSTM_model(predict=True)
-        with tf.Session() as sess:
+        with tf.compat.v1.Session() as sess:
             # load trainable variables
-            saver = tf.train.Saver()
+            saver = tf.compat.v1.train.Saver()
             ckpt = tf.train.get_checkpoint_state(save_dir+self.pass_id)
             saver.restore(sess, ckpt.model_checkpoint_path)
             
@@ -251,11 +245,11 @@ class Audio2Video:
             feed_dict = {}
             for i in range(inp.shape[0]):
                 # feed input and state
-                feed_dict[self.input_data] = [[inp[i]]]    # [1, 1, dimin]
+                feed_dict[self.input_data] = np.array([[inp[i]]])    # [1, 1, dimin]
                 
-                for i, (c, v) in enumerate(self.init_state):
+                for l, (c, v) in enumerate(self.init_state):
                     # i: layer id
-                    feed_dict[c], feed_dict[v] = state[i]
+                    feed_dict[c], feed_dict[v] = state[l]
                             
                 # pass the network
                 # output: (1, 1, dimout)
@@ -264,17 +258,19 @@ class Audio2Video:
                 
                 # reshape newstate and output
                 state = [(c, v) for (c, v) in newstate]
-                output = tf.reshape(output, [-1, self.dimout])
+                output = np.reshape(output, (self.dimout,))
                 
                 # further precess to output
-                outp_list[max(0, i-step_delay)] = np.array(output)
+                outp_list[max(0, i-step_delay)] = output
         
         outp = np.vstack(outp_list)     # outp.shape = (N, 20)
-        outps_mean, outps_std = data['outps_mean'], data['outps_std']
-        outp = outp * outps_std + outps_mean
+        outp = outp * ostd + omean
         
-        res_dir, _ = os.path.split(audiopath)
-        np.savez(res_dir+'/result.npz', outp=outp, times=audio_timestamp, step_delay=step_delay)
+        res_dir, filext = os.path.split(audiopath)
+        fname, _ = os.path.splitext(filext)
+        resf = os.path.join(res_dir, fname+'_res.npz')
+        np.savez(resf, outp=outp, times=audio_timestamp, step_delay=step_delay)
+        print('results saved into', resf)
 
 def multiLSTM(dim_hidden, nlayers, kp, predict=False):                      
     if not predict and kp < 1:
