@@ -60,12 +60,12 @@ class Audio2Video:
             batch_size = 1  # for we only predict one serial for one time
         
         # add this statement to avoid restart-error and duplicate graphs in tensorboard
-        tf.reset_default_graph()
+        tf.compat.v1.reset_default_graph()
         
         # prepare placeholders
         with tf.name_scope('inputs'):
-            self.input_data = tf.placeholder(tf.float32, [None, seq_len, self.dimin], name='audio')
-            self.output_data= tf.placeholder(tf.float32, [None, seq_len, self.dimout], name='video')
+            self.input_data = tf.compat.v1.placeholder(tf.float32, [None, seq_len, self.dimin], name='audio')
+            self.output_data= tf.compat.v1.placeholder(tf.float32, [None, seq_len, self.dimout], name='video')
         
         # add dropout wrapper & define multilayer network
         network = multiLSTM(self.args['dim_hidden'], self.args['nlayers'], self.args['keep_prob'], predict) 
@@ -108,9 +108,9 @@ class Audio2Video:
         self.final_state = state
 
         # add final weight matrix and final bias vector as said in the paper
-        with tf.variable_scope('final_wb'):
-            final_w = tf.get_variable('w', [self.args['dim_hidden'], self.dimout])
-            final_b = tf.get_variable('b', [self.dimout])        
+        with tf.compat.v1.variable_scope('final_wb'):
+            final_w = tf.compat.v1.get_variable('w', [self.args['dim_hidden'], self.dimout])
+            final_b = tf.compat.v1.get_variable('b', [self.dimout])        
         
         with tf.name_scope('outputs'):
             # tmp.shape = [batch_size, dim_hidden*seq_len]
@@ -118,24 +118,24 @@ class Audio2Video:
             # hidden_flat.shape = [batch_size*seq_len, dim_hidden]
             hidden_flat = tf.reshape(tmp, [-1, self.args['dim_hidden']])
             # output_hat_flat.shape = [batch_size*seq_len, dimout]
-            output_hat_flat = tf.nn.xw_plus_b(hidden_flat, final_w, final_b, name='output_hat')
+            output_hat_flat = tf.compat.v1.nn.xw_plus_b(hidden_flat, final_w, final_b, name='output_hat')
             
             # self.output.shape = [batch_size, seq_len, dimout]
             self.output = tf.reshape(output_hat_flat, [-1, seq_len, self.dimout])
         
         # define loss function (L2-norm error)
         with tf.name_scope('loss'):
-            self.loss = tf.reduce_mean(tf.squared_difference(self.output, self.output_data))
+            self.loss = tf.reduce_mean(tf.math.squared_difference(self.output, self.output_data))
       
         # deal with gradient and optimization
         with tf.name_scope('train'):
             self.lr = tf.Variable(0., trainable=False)
-            tvars = tf.trainable_variables()            # all trainable variables in this model
+            tvars = tf.compat.v1.trainable_variables()            # all trainable variables in this model
             grads = tf.gradients(self.loss, tvars)      # partial{loss}/partial{tvars}
             # clip gradients to avoid gradient explosion
             grads, _ = tf.clip_by_global_norm(grads, self.args['grad_clip'])
             # optimizer
-            optimizer = tf.train.AdamOptimizer(self.lr)
+            optimizer = tf.compat.v1.train.AdamOptimizer(self.lr)
             self.train_op = optimizer.apply_gradients(zip(grads, tvars))
         
     def train(self, showGraph=True):
@@ -144,8 +144,8 @@ class Audio2Video:
         
         self.LSTM_model(predict=False)
         
-        with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer())
+        with tf.compat.v1.Session() as sess:
+            sess.run(tf.compat.v1.global_variables_initializer())
             
             # restore model states
             startEpoch, saver = restoreState(sess, self.pass_id)
@@ -282,12 +282,12 @@ def multiLSTM(dim_hidden, nlayers, kp, predict=False):
         for i in range(nlayers):
             cell = tf.nn.rnn_cell.LSTMCell(dim_hidden)
             ikp, okp = kp, (1.0 if i < nlayers-1 else kp)
-            cell = tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=ikp, output_keep_prob=okp)
+            cell = tf.compat.v1.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=ikp, output_keep_prob=okp)
             cell_list.append(cell)
     else:
         cell_list = [tf.nn.rnn_cell.LSTMCell(dim_hidden) for i in range(nlayers)]
     
-    network = tf.nn.rnn_cell.MultiRNNCell(cell_list)
+    network = tf.compat.v1.nn.rnn_cell.MultiRNNCell(cell_list)
     return network
                     
 if __name__ == "__main__":

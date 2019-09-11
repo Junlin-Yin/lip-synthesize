@@ -189,7 +189,7 @@ def restoreState(sess, pass_id):
     saver      (Saver)  tf.train.Saver
     '''
     # define checkpoint saver
-    saver = tf.train.Saver(tf.global_variables())
+    saver = tf.compat.v1.train.Saver(tf.compat.v1.global_variables())
 
     # restore start epoch number and global variables
     last_ckpt = tf.train.latest_checkpoint(save_dir+pass_id)
