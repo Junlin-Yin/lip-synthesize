@@ -18,13 +18,13 @@ args['dr']         = 0.99  # learning rate's decay rate
 args['b_savef']    = 50    # batch report save frequency
 args['e_savef']    = 5     # epoch report save frequency
 
-args['pass_id']    = 'L1-h60-d20-u'
+args['pass_id']    = 'L1-h60-d20-n'
 args['argspath']   = None
 args['showGraph']  = False
 args['preprocess'] = False
-args['outp_norm']  = False
+args['outp_norm']  = True
 
-predict   = True
+predict   = False
 audiopath = pred_dir+'test037.npy'
 
 def run():
