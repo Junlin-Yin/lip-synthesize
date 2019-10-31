@@ -268,9 +268,10 @@ class Audio2Video:
         
         res_dir, filext = os.path.split(audiopath)
         fname, _ = os.path.splitext(filext)
-        resf = os.path.join(res_dir, fname+'_res.npz')
+        resf = os.path.join(res_dir, fname+'.npz')
         np.savez(resf, outp=outp, times=audio_timestamp, step_delay=step_delay)
         print('results saved into', resf)
+        return resf
 
 def multiLSTM(dim_hidden, nlayers, kp, predict=False):                      
     if not predict and kp < 1:

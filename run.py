@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+import numpy as np
 from model import Audio2Video
-from loadstore import plotLoss, pred_dir
+from loadstore import plotLoss, pred_dir, data_dir
+from visual import formMp4, combine
 
 # important parameters
 args = {}
@@ -18,14 +20,16 @@ args['dr']         = 0.99  # learning rate's decay rate
 args['b_savef']    = 50    # batch report save frequency
 args['e_savef']    = 5     # epoch report save frequency
 
-args['pass_id']    = 'L1-h60-d20-n'
+args['pass_id']    = 'L1-h60-d20-u'
 args['argspath']   = None
 args['showGraph']  = False
 args['preprocess'] = False
-args['outp_norm']  = True
+args['outp_norm']  = False
 
-predict   = False
-audiopath = pred_dir+'test037.npy'
+predict   = True
+testid = 'test037'
+audiopath = pred_dir+testid+'.npy'
+musicpath = pred_dir+testid+'.mp3'
 
 def run():
     a2v = Audio2Video(args=args)
@@ -33,7 +37,11 @@ def run():
         a2v.train()
         plotLoss(args['pass_id'])
     else:
-        a2v.test(audiopath=audiopath)
+        resdir = a2v.test(audiopath=audiopath)
+        avi_path = None
+        PCA_MAT = np.load(data_dir + 'PCA_MAT.npy')
+        outp_path = formMp4(resdir, PCA_MAT, avi_path)
+        print('Final results are successfully saved to path: %s' % outp_path)        
 
 if __name__ == '__main__':
     run()

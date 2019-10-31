@@ -16,7 +16,16 @@ base_dir = 'predict/'
 mark_color = (255, 255, 255)
 vfps = 30
 
-def formMp4(mp4_path, PCA_MAT, size=(1280, 720), fps=vfps):   
+def combine(mp4_path, mp3_path):
+    bdir, namext = os.path.split(mp4_path)
+    name, _ = os.path.splitext(namext)
+    outp_path = bdir + '/' + name + '.mp4'
+    command = 'ffmpeg -i ' + mp4_path + ' -i ' + mp3_path + ' -c:v copy -c:a aac -strict experimental ' + outp_path
+    call(command)
+    os.remove(mp4_path)
+    return outp_path
+
+def formMp4(mp4_path, mp3_path, PCA_MAT, avi_path=None, size=(1280, 720), fps=vfps):   
     # load result data predicted by LSTM network
     data = np.load(mp4_path)
     outp, times, delay = data['outp'], data['times'], int(data['step_delay'])
@@ -27,8 +36,10 @@ def formMp4(mp4_path, PCA_MAT, size=(1280, 720), fps=vfps):
     # construct each frame
     filedir, filename = os.path.split(mp4_path)
     filename, _ = os.path.splitext(filename)
-    writer = cv2.VideoWriter(filedir+'/'+filename+'.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, size)
+    avi_path = '%s/%s.avi' % (filedir, filename) if avi_path is None else avi_path
+    writer = cv2.VideoWriter(avi_path, cv2.VideoWriter_fourcc(*'DIVX'), fps, size)
     vnfr = int((delay_times[-1] - delay_times[0]) * vfps) 
+    all_ldmks = []
     for i in range(vnfr):
         # interpolating and get the 20 landmark positions
         itime = i / vfps - delay_times[0]
@@ -36,6 +47,7 @@ def formMp4(mp4_path, PCA_MAT, size=(1280, 720), fps=vfps):
         alpha = (itime - delay_times[left]) / period
         ldmks = outp[left,:] * (1-alpha) + outp[left+1,:] * alpha
         ldmks = np.matmul(PCA_MAT, ldmks).reshape((20, 2))
+        all_ldmks.append(ldmks)
         
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         for pt in ldmks:
@@ -43,19 +55,13 @@ def formMp4(mp4_path, PCA_MAT, size=(1280, 720), fps=vfps):
             show_pt = show_pt.astype(np.int)
             frame = cv2.circle(frame, tuple(show_pt), 3, mark_color, -1)
         writer.write(frame)
-    return filedir+'/'+filename+'.avi'
-        
-def combine(mp4_path, mp3_path):
-    bdir, namext = os.path.split(mp4_path)
-    name, _ = os.path.splitext(namext)
-    outp_path = bdir + '/' + name + '.mp4'
-    command = 'ffmpeg -i ' + mp4_path + ' -i ' + mp3_path + ' -c:v copy -c:a aac -strict experimental ' + outp_path
-    call(command)
-    os.remove(mp4_path)
-    return outp_path
+    
+    # save landmark coordinates of every frame
+    all_ldmks = np.array(all_ldmks)     # (vnfr, 20, 2)
+    np.save(filedir+'/'+filename+'_ldmks.npy', all_ldmks)
+    return combine(avi_path, mp3_path)
     
 if __name__ == '__main__':
     PCA_MAT = np.load(data_dir + 'PCA_MAT.npy')
-    mp4_path = formMp4(base_dir+'test036_res.npz', PCA_MAT)
-    outp_path = combine(mp4_path, base_dir+'test036.mp3')
+    outp_path = formMp4(base_dir+'test036_res.npz', PCA_MAT)
     print('Final results are successfully saved to path: %s' % outp_path)
